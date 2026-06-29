@@ -28,15 +28,8 @@ BROKER = "topstepx"        # which BrokerClient to use (see broker.make_broker)
 
 # ── market / sizing ────────────────────────────────────────────────────
 API_BASE = "https://api.topstepx.com/api"
-<<<<<<< HEAD
 SYMBOL = "MNQ"
 TIMEFRAME_MIN = 2
-=======
-SYMBOL = "NQ"
-TIMEFRAME_MIN = 3                # bar interval in minutes (CLI: --timeframe)
-TRAINED_TIMEFRAME_MIN = 3        # the interval the models/PPO were trained on; other
-#                                 timeframes run but are out of distribution
->>>>>>> c4ad8315dfc34af262c736319da10a71303eea82
 SIZE = 1
 
 # Micro contracts trade the SAME bars as their full-size parent (so the models

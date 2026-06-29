@@ -8,11 +8,6 @@ models were trained. EMA is a trivial recursive (causal) helper.
 import numpy as np
 import pandas as pd
 
-<<<<<<< HEAD
-from futures_foundation.pipeline._primitives import (
-    compute_adx, compute_atr, compute_supertrend,
-)
-=======
 # `futures_foundation.chronos` was renamed to `futures_foundation.pipeline`; prefer
 # the new name and fall back to the old so either version of the library works.
 try:
@@ -23,7 +18,6 @@ except ModuleNotFoundError:
     from futures_foundation.chronos._primitives import (
         compute_adx, compute_atr, compute_supertrend,
     )
->>>>>>> c4ad8315dfc34af262c736319da10a71303eea82
 
 
 def _hlc(bars: pd.DataFrame):
