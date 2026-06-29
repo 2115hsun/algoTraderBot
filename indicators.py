@@ -8,7 +8,7 @@ models were trained. EMA is a trivial recursive (causal) helper.
 import numpy as np
 import pandas as pd
 
-from futures_foundation.chronos._primitives import (
+from futures_foundation.pipeline._primitives import (
     compute_adx, compute_atr, compute_supertrend,
 )
 

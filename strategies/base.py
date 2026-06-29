@@ -145,7 +145,7 @@ class Strategy(ABC):
         if self._bundle is None:
             # Importing the chronos subpackage installs the legacy 'pipelines.chronos'
             # pickle-compat alias so older bundles unpickle without their origin repo.
-            import futures_foundation.chronos  # noqa: F401
+            import futures_foundation.pipeline  # noqa: F401
             self._bundle = joblib.load(
                 os.path.join(config.MODELS_DIR, self.model_filename))
         return self._bundle

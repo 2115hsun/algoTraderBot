@@ -24,9 +24,14 @@ def get_logger(name: str = "bot") -> logging.Logger:
     logger.setLevel(logging.INFO)
     fmt = logging.Formatter("%(asctime)s %(levelname)s %(message)s",
                             "%Y-%m-%d %H:%M:%S")
-    fh = logging.FileHandler(LOG_FILE)
+    fh = logging.FileHandler(LOG_FILE, encoding="utf-8")
     fh.setFormatter(fmt)
-    sh = logging.StreamHandler()
+    import sys
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+    sh = logging.StreamHandler(sys.stdout)
     sh.setFormatter(fmt)
     logger.addHandler(fh)
     logger.addHandler(sh)

@@ -1,3 +1,7 @@
+import sys
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 #!/usr/bin/env python3
 """
 bot.py — multi-strategy TopstepX AI bot with a PPO trailing exit.

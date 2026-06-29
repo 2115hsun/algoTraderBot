@@ -11,7 +11,7 @@ try:
 except ImportError:                       # dotenv optional (not needed for backtest)
     def load_dotenv(*a, **k):
         return False
-
+    
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # ── credentials ────────────────────────────────────────────────────────
@@ -28,8 +28,8 @@ BROKER = "topstepx"        # which BrokerClient to use (see broker.make_broker)
 
 # ── market / sizing ────────────────────────────────────────────────────
 API_BASE = "https://api.topstepx.com/api"
-SYMBOL = "NQ"
-TIMEFRAME_MIN = 3
+SYMBOL = "MNQ"
+TIMEFRAME_MIN = 2
 SIZE = 1
 
 # Micro contracts trade the SAME bars as their full-size parent (so the models
@@ -62,8 +62,8 @@ MAX_CONTRACTS = 10         # cap on risk-sized contracts
 # ── strategy selection ─────────────────────────────────────────────────
 # Which strategies run. One name = single strategy; list both to run them
 # together — when both fire on the same bar, the higher-proba signal is taken.
-ACTIVE_STRATEGIES = ["ema"]                    # any of: supertrend, ema, keltner, bos
-PROBA_FLOOR = 0.35          # enter only when a strategy grades its signal >= this
+ACTIVE_STRATEGIES = ["supertrend","keltner"]                    # any of: supertrend, ema, keltner, bos
+PROBA_FLOOR = 0.3          # enter only when a strategy grades its signal >= this
 
 # ── shared trade definition (matches how the models scored trades) ─────
 ATR_P     = 20              # ATR period for the protective stop
