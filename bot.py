@@ -28,12 +28,41 @@ import os
 import time
 
 import config
-import exit_manager as ex
+from ppo_exit import exit_manager as ex
 import strategies as strat
 from broker import SIDE, make_broker
 from logsetup import get_logger
 
 log = get_logger()
+
+
+def ensure_exit_policy():
+    """The PPO exit policy for the active timeframe, training one if it's missing.
+
+    With USE_PPO_EXIT on and no policy for this timeframe, FLAG it and run
+    train_ppo_exit for that timeframe — in a SUBPROCESS, so torch/SB3 never load
+    next to xgboost in the trading process (they segfault together on macOS).
+    Returns the policy path, or None if PPO exit is off or the train produced
+    nothing (the bot then falls back to the fixed-RR bracket exit)."""
+    if not config.USE_PPO_EXIT:
+        return None
+    path = config.policy_path()
+    if os.path.exists(path):
+        return path
+    log.warning("⚠️  no PPO exit policy for %d-min (%s missing) — training one now "
+                "(one-time per timeframe; runs train_ppo_exit)…",
+                config.TIMEFRAME_MIN, os.path.basename(path))
+    import subprocess
+    import sys
+    r = subprocess.run([sys.executable, "-m", "ppo_exit.train_ppo_exit",
+                        "--timeframe", str(config.TIMEFRAME_MIN)], cwd=config.HERE)
+    if r.returncode != 0 or not os.path.exists(path):
+        log.warning("⚠️  could not train a %d-min PPO policy — falling back to the "
+                    "fixed %sR exit", config.TIMEFRAME_MIN, config.RR)
+        return None
+    log.info("✅ trained PPO exit for %d-min → %s",
+             config.TIMEFRAME_MIN, os.path.basename(path))
+    return path
 
 
 class BotContext:
@@ -43,7 +72,7 @@ class BotContext:
 
     def __init__(self, client, account_id, contract_id, tick_size,
                  tick_value=0.0, log_candles=True):
-        import trail_exit_env as tee     # numpy-only PPO policy loader
+        from ppo_exit import trail_exit_env as tee  # numpy-only PPO policy loader
         self.client = client
         self.account_id = account_id
         self.contract_id = contract_id
@@ -53,8 +82,9 @@ class BotContext:
         self.tee = tee
         self.strategies = strat.make_strategies()
         self.policy = None
-        if config.USE_PPO_EXIT and os.path.exists(config.POLICY_PATH):
-            self.policy = tee.NumpyMlpPolicy.load(config.POLICY_PATH)
+        pol = ensure_exit_policy()
+        if pol:
+            self.policy = tee.NumpyMlpPolicy.load(pol)
         self.trailing = bool(self.policy) and config.USE_TRAILING_STOP
 
     @property
@@ -236,10 +266,11 @@ def run():
 def _retrain_exit(quick: bool, timesteps: int):
     """Retrain the PPO trailing-exit policy (delegates to train_ppo_exit)."""
     import sys
-    import train_ppo_exit
-    sys.argv = ["train_ppo_exit.py"] + (
-        ["--quick"] if quick else ["--timesteps", str(timesteps)])
-    log.info("retraining PPO exit (%s)…", "quick" if quick else f"{timesteps} steps")
+    from ppo_exit import train_ppo_exit
+    sys.argv = (["train_ppo_exit.py", "--timeframe", str(config.TIMEFRAME_MIN)]
+                + (["--quick"] if quick else ["--timesteps", str(timesteps)]))
+    log.info("retraining PPO exit for %d-min (%s)…", config.TIMEFRAME_MIN,
+             "quick" if quick else f"{timesteps} steps")
     train_ppo_exit.main()
 
 
@@ -250,7 +281,11 @@ if __name__ == "__main__":
     ap.add_argument("--backtest", action="store_true",
                     help="simulate over a local CSV (no API calls)")
     ap.add_argument("--symbol", default=config.SYMBOL,
-                    help="backtest symbol (uses data/<symbol>_3min.csv)")
+                    help="backtest symbol (uses data/<symbol>_<timeframe>min.csv)")
+    ap.add_argument("--timeframe", type=int, default=None, metavar="MIN",
+                    help="bar interval in minutes (default %d). NOTE: the entry "
+                         "models and PPO exit are trained on 3-min bars, so other "
+                         "values are out of distribution." % config.TIMEFRAME_MIN)
     ap.add_argument("--strategy", nargs="+", metavar="NAME",
                     choices=list(strat.REGISTRY),
                     help="strategies to run: %(choices)s "
@@ -277,6 +312,11 @@ if __name__ == "__main__":
 
     if args.size is not None and args.risk is not None:
         raise SystemExit("use either --size or --risk, not both")
+    if args.timeframe is not None:
+        if args.timeframe < 1:
+            raise SystemExit("--timeframe must be >= 1 (minutes)")
+        config.TIMEFRAME_MIN = args.timeframe
+        config.apply_exit_config()       # load this timeframe's exit shaping
     if args.strategy:
         config.ACTIVE_STRATEGIES = args.strategy
     if args.proba_floor is not None:

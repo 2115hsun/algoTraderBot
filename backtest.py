@@ -24,7 +24,7 @@ WINDOW = 500           # trailing bars handed to each step (indicator warmup + C
 
 
 def _load(symbol: str, end) -> pd.DataFrame:
-    path = os.path.join(config.HERE, "data", f"{symbol}_3min.csv")
+    path = os.path.join(config.HERE, "data", f"{symbol}_{config.TIMEFRAME_MIN}min.csv")
     if not os.path.exists(path):
         raise SystemExit(f"no data file: {path}")
     df = pd.read_csv(path).rename(columns={"datetime": "time"})

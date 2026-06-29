@@ -93,6 +93,24 @@ several — when more than one fires on a bar, the highest-proba signal wins):
 | `keltner` | Keltner-channel breakout, gated to ADX ≥ 20 |
 | `bos` | break of the last confirmed swing (break of structure) |
 | `orb` | 15-min opening-range breakout (09:30 ET), gated to ADX ≥ 18 |
+| `cisd_ote` | CISD displacement → OTE fib-zone pullback (mean-reversion, ICT/SMC) |
+
+**Timeframe** (`--timeframe MIN`, default 3): the bar interval. Models are
+per-timeframe and there is **no cross-timeframe fallback** — only strategies with a
+model for the chosen interval are allowed, so a 3-min model is never run on 1-min
+bars. Today: **3-min** has all five strategies; **1-min** has `supertrend` only.
+
+```bash
+python bot.py --strategy supertrend --timeframe 1   # 1-min SuperTrend
+python bot.py --strategy ema --timeframe 1           # error: no 1-min ema model
+```
+
+A non-3-min run loads `data/<symbol>_<tf>min.csv` for backtests and the
+`<model>_<tf>min.joblib` entry bundle (e.g. `supertrend_chronos_1min.joblib`). The
+PPO exit is per-timeframe too — if no policy exists for the chosen timeframe yet,
+the bot **flags it and trains one automatically** (`python -m ppo_exit.train_ppo_exit --timeframe <tf>`,
+run once in a subprocess) before trading; it falls back to the fixed-RR exit only if
+that training can't produce a policy.
 
 On startup the bot prints your tradable accounts and a banner —
 `✅ <account> | <contract> | 3-min | [ema] | conf≥0.35 | exit: PPO stop-reprice |
@@ -106,9 +124,10 @@ Pick strategies and exit shaping in `config.py`:
 ```python
 ACTIVE_STRATEGIES = ["ema"]      # any of: supertrend, ema, keltner, bos, orb (or --strategy)
 PROBA_FLOOR       = 0.35         # min entry confidence (or pass --proba-floor)
-ACTIVATE_R        = 2.0          # hold the initial 1R stop until +2R, then trail
-GIVEBACK_R        = 0.75         # once trailing, give back ≤ this R from the peak
 USE_PPO_EXIT      = True         # False → simple fixed-RR bracket instead
+ACTIVATE_R        = 2.0          # default exit shaping; the ACTUAL per-timeframe
+GIVEBACK_R        = 0.75         # ACTIVATE_R/GIVEBACK_R/STOP_ATR live in
+                                 # ppo_exit/exit_configs.json (see Tune the exit config)
 ```
 
 **Position sizing** — use a **fixed size** *or* **risk-based sizing** (not both).
@@ -141,7 +160,7 @@ python bot.py --backtest --symbol MNQ --start 2026-05-01 --end 2026-06-01
 python bot.py --backtest --symbol ES --risk 500
 ```
 
-- `--symbol` reads `data/<symbol>_3min.csv` (ships with NQ, ES, RTY, YM, GC);
+- `--symbol` reads `data/<symbol>_<timeframe>min.csv` (ships with NQ, ES, RTY, YM, GC at 3-min);
   **micros use their parent's bars** (MNQ → NQ) at the micro's tick value.
 - `--start` / `--end` are `YYYY-MM-DD` (**start inclusive, end exclusive**); omit
   either to run from the warmup point / to the end of the file.
@@ -175,7 +194,7 @@ YM, GC) and generalize across them; the framework is ticker- and broker-agnostic
   `grade()`. Signals with `proba ≥ PROBA_FLOOR` are candidates; the **highest
   proba wins** (one position per contract). The trade enters at market with a
   protective stop at `0.5×ATR(20)` — exactly how the models scored the trade.
-- **Exit** — each bar the PPO policy (`models/rl_trail_exit/`) reads the open
+- **Exit** — each bar the PPO policy (`ppo_exit/policies/`) reads the open
   trade's R-state (unrealized R, MFE, stop distance, ATR/risk, time, momentum) —
   **strategy-agnostic**, it never sees how the trade was entered, so one policy
   fits every strategy on the standard 0.5×ATR(20) stop. It computes a
@@ -197,7 +216,7 @@ YM, GC) and generalize across them; the framework is ticker- and broker-agnostic
   direction-aware tick-snapped (floor longs / ceil shorts) so rounding never
   lands them on the wrong side.
 - **Training = live parity.** The policy is trained inside `TrailExitSim`
-  (`trail_exit_env.py`) and run live by `exit_manager.manage_trail`; the two
+  (`ppo_exit/trail_exit_env.py`) and run live by `ppo_exit/exit_manager.py`; the two
   implement the *same* give-back logic — activation gate, peak from the bar's
   favorable extreme, give-back cap, and the `MAX_HOLD` force-exit (the policy
   observes `bars_held/MAX_HOLD`, so live force-exits at the same horizon it was
@@ -263,21 +282,22 @@ Small, single-responsibility modules:
 | `indicators.py` | SuperTrend / ATR / ADX / EMA / Keltner / swings / opening range |
 | `embedder.py` / `embed_worker.py` | warm Chronos embedding worker — model loaded once per session |
 | `strategies/` | the pluggable strategies (one file each) + shared base |
-| `exit_manager.py` | PPO trailing-stop management for an open position |
+| `ppo_exit/` | the whole PPO trailing-exit subsystem (see below) |
 | `logsetup.py` | logging to `log/bot.log` |
-| `trail_exit_env.py` | PPO training environment + torch-free policy loader |
-| `train_ppo_exit.py` | trains the trailing-exit policy |
-| `models/` | the entry models + the trailing-exit policy |
+| `models/` | the entry models (joblib) + FFM feature order |
 
 ```
-strategies/                 models/
-  base.py   Strategy ABC       supertrend_chronos.joblib     entry model (SuperTrend)
-  supertrend.py → supertrend   ema_cross_chronos.joblib      entry model (EMA cross)
-  ema_cross.py  → ema          keltner_adx_chronos.joblib    entry model (Keltner)
-  keltner.py    → keltner      bos_chronos.joblib            entry model (BOS)
-  bos.py        → bos          orb_chronos.joblib            entry model (ORB)
-  orb.py        → orb          ffm_feature_columns.json      FFM feature order
-                               rl_trail_exit/ppo_trail_exit.npz   trailing-exit policy
+strategies/                 ppo_exit/   (the PPO trailing-exit subsystem)
+  base.py   Strategy ABC       exit_manager.py    live exit management
+  supertrend.py → supertrend   trail_exit_env.py  training env/sim + numpy policy loader
+  ema_cross.py  → ema          train_ppo_exit.py  trainer (python -m ppo_exit.train_ppo_exit)
+  keltner.py    → keltner      optimize_exit.py   Optuna config search
+  bos.py        → bos          precompute_proba.py entry-grading for training
+  orb.py        → orb          exit_configs.json  per-timeframe ACTIVATE_R/GIVEBACK_R/STOP_ATR
+                               policies/          the trained .npz policies (per timeframe)
+
+models/   supertrend_chronos.joblib + _1min  ema_cross / keltner_adx / bos / orb _chronos.joblib
+          ffm_feature_columns.json (FFM feature order)
 ```
 
 The bot depends only on the public **`futures_foundation`** library (Chronos
@@ -306,17 +326,44 @@ client would just provide the same account / market-data / order methods.
 ```bash
 python bot.py --retrain-exit          # full retrain, then exit
 python bot.py --retrain-exit --quick  # fast smoke retrain
-python train_ppo_exit.py              # same thing, standalone
+python -m ppo_exit.train_ppo_exit     # same thing, standalone
 ```
 
 Catalogs a representative set of entry points in `data/NQ_3min.csv`, keeps the
-ones the bot would enter (`proba ≥ 0.35`, cached in `proba_cache.npz`), simulates
+ones the bot would enter (`proba ≥ 0.35`, cached per-timeframe in `ppo_exit/proba_cache*.npz`), simulates
 each trade from the live **0.5×ATR(20) stop** with the `ACTIVATE_R`/`GIVEBACK_R`
 shaping while the agent learns the trail, then benchmarks vs fixed-RR /
-constant-trail baselines and writes the policy into `models/rl_trail_exit/`. The
+constant-trail baselines and writes the policy into `ppo_exit/policies/`. The
 exit is strategy-agnostic (it only sees the trade's R-state), so the same policy
 serves every strategy. The printed holdout table is the source of truth for
 current performance.
+
+### Tune the exit config (Optuna)
+
+The exit's behaviour is set by `ACTIVATE_R` / `GIVEBACK_R` / `STOP_ATR` — and the
+PPO trail collapses to that give-back cap, so the config *is* the lever. Search it:
+
+```bash
+python -m ppo_exit.optimize_exit --timeframe 3 --tickers NQ --trials 200 --save
+python -m ppo_exit.optimize_exit --timeframe 1 --tickers NQ ES RTY YM GC --trials 300 --save
+```
+
+It replays the exact give-back sim (`TrailExitSim`) per config — no PPO retrain per
+trial — scoring expectancy on a **validation** slice and reporting the winner on a
+held-out **test** slice, so the chosen config isn't overfit to one window. Pool
+multiple tickers with `--tickers` for more data. It prints the best
+`ACTIVATE_R`/`GIVEBACK_R`/`STOP_ATR` (and whether it beats the current config on
+test); with `--save` it writes the winner to that timeframe's entry in
+`ppo_exit/exit_configs.json`. Then retrain so the policy matches the new shaping:
+`python -m ppo_exit.train_ppo_exit --timeframe <tf>`. (1-min CSVs are local-only —
+see Backtest.)
+
+**Per-timeframe configs.** `ppo_exit/exit_configs.json` holds the exit shaping
+(`ACTIVATE_R`/`GIVEBACK_R`/`STOP_ATR`) **keyed by timeframe** — 1-min and 3-min
+bars want different settings (1-min is noisier, so it whipsaws into the stop far
+more; a wider `STOP_ATR` helps). The active timeframe's config is applied at
+runtime to **both** the live exit and the training sim, so training stays equal to
+live. Defaults (no JSON entry) fall back to `config.py`'s `ACTIVATE_R`/`GIVEBACK_R`.
 
 ## Tests
 
@@ -362,6 +409,13 @@ and lightweight fakes. Coverage focuses on the order/exit money paths:
   (the real driver): long/short give-back winners, stop-out loser, fixed-RR
   target + stop, the highest-proba resolver, the proba floor, and
   reconstruct-on-restart
+- `test_timeframe` — per-timeframe model resolution + gating (only strategies with
+  a model for the timeframe are allowed; no cross-timeframe fallback)
+- `test_ensure_policy` — auto-train the PPO exit when a timeframe has no policy
+  (and fall back to fixed-RR if training can't produce one)
+- `test_exit_configs` — per-timeframe exit config load/save (`exit_configs.json`)
+- `test_optimize_exit` — the Optuna scanner's metric/split math and that the
+  give-back replay is genuinely sensitive to each config knob
 
 ## Caveats
 
