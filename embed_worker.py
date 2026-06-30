@@ -62,11 +62,17 @@ def main():
 
     import torch
     from chronos import BaseChronosPipeline
+    from futures_foundation.extractors.chronos.backbone import _maybe_return_shape
+
     try:
         from futures_foundation import foundation
         src = foundation.active_source()
     except Exception:
         src = os.environ.get("CHRONOS_FT_CKPT") or "amazon/chronos-bolt-tiny"
+
+    # Enable the +7 return-shape dims to match the training pipeline output
+    os.environ.setdefault('CHRONOS_RETURN_SHAPE', '1')
+
     print(f"[embed_worker] loading Chronos once: {src}", file=sys.stderr, flush=True)
     pipe = BaseChronosPipeline.from_pretrained(src, device_map="cpu",
                                                dtype=torch.float32)
@@ -74,7 +80,7 @@ def main():
 
     while True:
         windows = _read_array(inb)
-        if windows is None:                       # stdin closed → shut down
+        if windows is None:
             break
         X = np.asarray(windows, dtype=np.float32)
         chunks = []
@@ -82,7 +88,9 @@ def main():
             for s in range(0, len(X), _BATCH):
                 emb, _ = pipe.embed(torch.tensor(X[s:s + _BATCH]))
                 chunks.append(emb.mean(1).cpu().numpy())
-        _write_array(out, np.concatenate(chunks).astype(np.float32))
+        E = np.concatenate(chunks).astype(np.float32)          # (N, 256) pooled
+        E_full = _maybe_return_shape(E, X).astype(np.float32)  # (N, 263) with +7
+        _write_array(out, E_full)
 
 
 if __name__ == "__main__":

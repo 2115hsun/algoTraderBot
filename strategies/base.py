@@ -159,12 +159,20 @@ class Strategy(ABC):
 
     def _load_bundle(self) -> dict:
         if self._bundle is None:
-            # Importing the pipeline subpackage installs the legacy 'pipelines.chronos'
-            # pickle-compat alias so older bundles unpickle without their origin repo.
-            # (chronos was renamed to pipeline — fall back to the old name.)
-            try:
-                import futures_foundation.pipeline  # noqa: F401
-            except ModuleNotFoundError:
-                import futures_foundation.chronos    # noqa: F401
+            # Pickle-compat shim: bundles trained against the old layout reference
+            # 'futures_foundation.chronos.*'. In v2.0 the module was renamed to
+            # 'futures_foundation.pipeline'. Alias the old name so unpickle works.
+            import sys
+            import futures_foundation.pipeline as _pipeline
+            sys.modules.setdefault('futures_foundation.chronos', _pipeline)
+            # Also alias common submodules pickled bundles may reference.
+            for sub in ('_primitives', 'produce', 'evaluate', 'head_xgb',
+                        'head_risk', 'backbone'):
+                try:
+                    mod = __import__(f'futures_foundation.pipeline.{sub}',
+                                     fromlist=['_'])
+                    sys.modules.setdefault(f'futures_foundation.chronos.{sub}', mod)
+                except ImportError:
+                    pass  # submodule doesn't exist in this FFM version
             self._bundle = joblib.load(self.model_path())
         return self._bundle

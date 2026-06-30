@@ -30,6 +30,7 @@ BROKER = "topstepx"        # which BrokerClient to use (see broker.make_broker)
 API_BASE = "https://api.topstepx.com/api"
 SYMBOL = "MNQ"
 TIMEFRAME_MIN = 2
+TRAINED_TIMEFRAME_MIN = 2    # the timeframe the shipped models were trained on
 SIZE = 1
 
 # Micro contracts trade the SAME bars as their full-size parent (so the models
